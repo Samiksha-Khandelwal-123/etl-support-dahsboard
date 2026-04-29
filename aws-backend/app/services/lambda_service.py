@@ -1,4 +1,4 @@
-"""AWS Lambda-backed metrics via Lambda + CloudWatch."""
+"""AWS  Lambda-backed metrics via Lambda + CloudWatch."""
 from __future__ import annotations
 
 import logging
