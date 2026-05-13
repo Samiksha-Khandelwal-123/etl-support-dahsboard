@@ -21,6 +21,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Button } from "@/components/ui/button";
+import CloudWatchLogViewer from "@/components/CloudWatchLogViewer";
 import {
   CheckCircle2,
   XCircle,
@@ -31,6 +33,7 @@ import {
   Minus,
   AlertCircle,
   Cpu,
+  FileText,
 } from "lucide-react";
 
 interface JobRun {
@@ -148,7 +151,17 @@ function filterRunsByDateRange<T extends { startTime: string }>(
   });
 }
 
-function JobHistorySubsection({ jobName }: { jobName: string }) {
+interface JobHistorySubsectionProps {
+  jobName: string;
+  onAnalyzeLogs: (runId: string) => void;
+}
+
+interface JobHistorySubsectionProps {
+  jobName: string;
+  onAnalyzeLogs: (runId: string) => void;
+}
+
+function JobHistorySubsection({ jobName, onAnalyzeLogs }: JobHistorySubsectionProps) {
   const { data, isLoading } = useQuery<RunHistoryItem[]>({
     queryKey: ["pipeline-history", jobName],
     queryFn: async () => {
@@ -223,6 +236,9 @@ function JobHistorySubsection({ jobName }: { jobName: string }) {
             <TableHead className="text-[11px] uppercase tracking-wide text-slate-500">
               Error
             </TableHead>
+            <TableHead className="text-[11px] uppercase tracking-wide text-slate-500 text-center">
+              Logs
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -261,6 +277,17 @@ function JobHistorySubsection({ jobName }: { jobName: string }) {
                   <span className="text-muted-foreground">—</span>
                 )}
               </TableCell>
+              <TableCell className="text-center">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={() => onAnalyzeLogs(r.id)}
+                >
+                  <FileText className="h-3 w-3 mr-1" />
+                  Analyze
+                </Button>
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -279,7 +306,17 @@ interface LambdaHistoryItem {
   errorMessage: string | null;
 }
 
-function LambdaHistorySubsection({ functionName }: { functionName: string }) {
+interface LambdaHistorySubsectionProps {
+  functionName: string;
+  onAnalyzeLogs: (invocationId: string) => void;
+}
+
+interface LambdaHistorySubsectionProps {
+  functionName: string;
+  onAnalyzeLogs: (invocationId: string) => void;
+}
+
+function LambdaHistorySubsection({ functionName, onAnalyzeLogs }: LambdaHistorySubsectionProps) {
   const { data, isLoading } = useQuery<LambdaHistoryItem[]>({
     queryKey: ["lambda-history", functionName],
     queryFn: async () => {
@@ -357,6 +394,9 @@ function LambdaHistorySubsection({ functionName }: { functionName: string }) {
             <TableHead className="text-[11px] uppercase tracking-wide text-slate-500">
               Error
             </TableHead>
+            <TableHead className="text-[11px] uppercase tracking-wide text-slate-500 text-center">
+              Logs
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -401,6 +441,17 @@ function LambdaHistorySubsection({ functionName }: { functionName: string }) {
                   <span className="text-muted-foreground">—</span>
                 )}
               </TableCell>
+              <TableCell className="text-center">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs"
+                  onClick={() => onAnalyzeLogs(r.id)}
+                >
+                  <FileText className="h-3 w-3 mr-1" />
+                  Analyze
+                </Button>
+              </TableCell>
             </TableRow>
           ))}
         </TableBody>
@@ -417,6 +468,9 @@ export default function ExecutiveOverview() {
   const [dateRange, setDateRange] = useState("today");
   const [resourceType, setResourceType] = useState<"job" | "lambda">("job");
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [logsModalOpen, setLogsModalOpen] = useState(false);
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [selectedJobName, setSelectedJobName] = useState<string | null>(null);
 
   // Reset expansion when switching account
   useEffect(() => {
@@ -815,9 +869,23 @@ export default function ExecutiveOverview() {
                         <TableRow className="hover:bg-transparent">
                           <TableCell colSpan={7} className="p-0">
                             {isLambda ? (
-                              <LambdaHistorySubsection functionName={row.name} />
+                              <LambdaHistorySubsection 
+                                functionName={row.name}
+                                onAnalyzeLogs={(invocationId) => {
+                                  setSelectedJobId(invocationId);
+                                  setSelectedJobName(row.name);
+                                  setLogsModalOpen(true);
+                                }}
+                              />
                             ) : (
-                              <JobHistorySubsection jobName={row.name} />
+                              <JobHistorySubsection 
+                                jobName={row.name}
+                                onAnalyzeLogs={(runId) => {
+                                  setSelectedJobId(runId);
+                                  setSelectedJobName(row.name);
+                                  setLogsModalOpen(true);
+                                }}
+                              />
                             )}
                           </TableCell>
                         </TableRow>
@@ -830,6 +898,19 @@ export default function ExecutiveOverview() {
           </Table>
         </CardContent>
       </Card>
+
+      {/* CloudWatch Log Viewer Modal */}
+      <CloudWatchLogViewer
+        jobId={selectedJobId}
+        jobName={selectedJobName}
+        resourceType={resourceType}
+        open={logsModalOpen}
+        onClose={() => {
+          setLogsModalOpen(false);
+          setSelectedJobId(null);
+          setSelectedJobName(null);
+        }}
+      />
     </div>
   );
 }

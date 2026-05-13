@@ -7,6 +7,7 @@ import incidentsRouter from "./incidents";
 import rcaRouter from "./rca";
 import costsRouter from "./costs";
 import lambdasRouter from "./lambdas";
+import logsRouter from "./logs";
 
 const router: IRouter = Router();
 
@@ -18,5 +19,6 @@ router.use(incidentsRouter);
 router.use(rcaRouter);
 router.use(costsRouter);
 router.use(lambdasRouter);
+router.use(logsRouter);
 
 export default router;
