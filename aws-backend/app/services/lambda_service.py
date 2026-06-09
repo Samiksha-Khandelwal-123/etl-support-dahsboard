@@ -1,4 +1,4 @@
-"""AWS  Lambda-backed metrics via Lambda CloudWatch."""
+"""AWS Lambda-backed metrics via Lambda + CloudWatch."""
 from __future__ import annotations
 
 import logging
@@ -6,6 +6,9 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from botocore.exceptions import BotoCoreError, ClientError
+
+from dotenv import load_dotenv
+load_dotenv()
 
 from ..aws import client
 from ..cache import cached
@@ -28,29 +31,38 @@ def _matches_tag(tags: dict) -> bool:
 
 @cached("medium")
 def list_functions() -> List[dict]:
+    print("\n🔹 Fetching Lambda functions...\n")
+
     lam = client("lambda")
     fns: List[dict] = []
     try:
         paginator = lam.get_paginator("list_functions")
         for page in paginator.paginate():
             for fn in page.get("Functions", []):
+                name = fn["FunctionName"]
+                print(f"👉 Found Lambda: {name}")
+
                 try:
                     arn = fn["FunctionArn"]
                     tags = lam.list_tags(Resource=arn).get("Tags", {}) or {}
                 except (BotoCoreError, ClientError):
                     tags = {}
-                if not _matches_tag(tags):
-                    continue
+                # if not _matches_tag(tags):
+                #     continue
                 fn["_tags"] = tags
                 fns.append(fn)
     except (BotoCoreError, ClientError) as exc:
         log.error("Lambda list_functions failed: %s", exc)
         raise
+
+    print(f"\n✅ Total Lambda Functions: {len(fns)}\n")
     return fns
 
 
 def _metric_sum(name: str, function_name: str, period_minutes: int = 1440) -> float:
     cw = client("cloudwatch")
+    print(f"   📊 Fetching SUM metric [{name}] for {function_name}")
+
     end = datetime.now(timezone.utc)
     start = end - timedelta(minutes=period_minutes)
     try:
@@ -66,11 +78,16 @@ def _metric_sum(name: str, function_name: str, period_minutes: int = 1440) -> fl
     except (BotoCoreError, ClientError) as exc:
         log.warning("CW %s for %s failed: %s", name, function_name, exc)
         return 0.0
-    return sum(d.get("Sum", 0.0) for d in resp.get("Datapoints", []))
+    
+    value = sum(d.get("Sum", 0.0) for d in resp.get("Datapoints", []))
+    print(f"   ➜ {name} = {value}")
+    return value
 
 
 def _metric_avg(name: str, function_name: str, period_minutes: int = 1440) -> float:
     cw = client("cloudwatch")
+    print(f"   📊 Fetching AVG metric [{name}] for {function_name}")
+
     end = datetime.now(timezone.utc)
     start = end - timedelta(minutes=period_minutes)
     try:
@@ -87,7 +104,9 @@ def _metric_avg(name: str, function_name: str, period_minutes: int = 1440) -> fl
         log.warning("CW %s for %s failed: %s", name, function_name, exc)
         return 0.0
     pts = resp.get("Datapoints", [])
-    return sum(d.get("Average", 0.0) for d in pts) / len(pts) if pts else 0.0
+    value = sum(d.get("Average", 0.0) for d in pts) / len(pts) if pts else 0.0
+    print(f"   ➜ {name} = {value}")
+    return value
 
 
 def _cost_per_invocation(memory_mb: int, avg_duration_ms: float) -> float:
@@ -97,6 +116,7 @@ def _cost_per_invocation(memory_mb: int, avg_duration_ms: float) -> float:
 
 @cached("medium")
 def kpis() -> LambdaKpis:
+    print("\n🔹 Calculating KPIs...\n")
     fns = list_functions()
     total = len(fns)
     healthy = 0
@@ -109,11 +129,15 @@ def kpis() -> LambdaKpis:
 
     for fn in fns:
         name = fn["FunctionName"]
+        print(f"\n🚀 Processing Lambda: {name}")
+
         invocations = _metric_sum("Invocations", name)
         errors = _metric_sum("Errors", name)
         throttles = _metric_sum("Throttles", name)
         avg_dur = _metric_avg("Duration", name)
         init_dur = _metric_sum("InitDuration", name)
+
+        print(f"   📌 Summary → Invocations={invocations}, Errors={errors}, Throttles={throttles}, AvgDur={avg_dur}")
 
         invocations_total += int(invocations)
         throttled_total += int(throttles)
@@ -127,6 +151,8 @@ def kpis() -> LambdaKpis:
 
     avg_dur_ms = round(sum(durations) / len(durations), 2) if durations else 0.0
     cold_pct = round((cold_total / init_total) * 100, 2) if init_total else 0.0
+    print("\n✅ KPI Calculation Complete\n")
+
     return LambdaKpis(
         totalFunctions=total,
         healthy=healthy,
@@ -187,13 +213,19 @@ def _logs_latest_invocation(function_name: str) -> Optional[dict]:
 
 @cached("short")
 def recent_invocations(limit: int = 12) -> List[LambdaInvocation]:
+    print("\n🔹 Fetching Recent Invocations...\n")
+
     out: List[LambdaInvocation] = []
     for fn in list_functions()[:limit]:
         name = fn["FunctionName"]
+        print(f"\n📌 Checking Lambda: {name}")
+
         invocations = _metric_sum("Invocations", name, period_minutes=60)
         errors = _metric_sum("Errors", name, period_minutes=60)
         throttles = _metric_sum("Throttles", name, period_minutes=60)
         avg_dur = _metric_avg("Duration", name, period_minutes=60)
+        print(f"   ➜ Status Data → Inv={invocations}, Err={errors}, Throttle={throttles}")
+
         memory = int(fn.get("MemorySize", 128))
         latest = _logs_latest_invocation(name) or {}
         start = latest.get("start")
@@ -209,4 +241,18 @@ def recent_invocations(limit: int = 12) -> List[LambdaInvocation]:
                 costPerRun=_cost_per_invocation(memory, avg_dur),
             )
         )
+
+    print("\n✅ Recent Invocation Fetch Complete\n")
     return out
+
+# ✅ ENTRY POINT
+if __name__ == "__main__":
+    print("\n================= START =================\n")
+
+    kpi_data = kpis()
+    print("\n🎯 KPI RESULT:\n", kpi_data)
+
+    invocations = recent_invocations()
+    print("\n🎯 INVOCATIONS RESULT:\n", invocations)
+
+    print("\n================= END =================\n")

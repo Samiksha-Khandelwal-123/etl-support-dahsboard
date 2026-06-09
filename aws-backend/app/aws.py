@@ -17,8 +17,6 @@ def _boto_config() -> Config:
         read_timeout=s.boto_read_timeout,
         user_agent_extra=f"{s.app_name}/{s.app_env}",
     )
-
-
 def _session() -> boto3.session.Session:
     s = get_settings()
     if s.aws_profile:
@@ -30,7 +28,7 @@ def _session() -> boto3.session.Session:
             aws_session_token=s.aws_session_token,
             region_name=s.aws_region,
         )
-    # Default credential chain (env vars, IAM role, etc.)
+    # Default credential chain (env vars, IAM role, task role, etc.)
     return boto3.session.Session(region_name=s.aws_region)
 
 

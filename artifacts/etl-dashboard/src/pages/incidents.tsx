@@ -259,36 +259,14 @@ export default function Incidents() {
     { name: "P4", count: scaled.p4, fill: "#94a3b8" },
   ];
 
-  // Closed incidents to give us Resolved entries in the list/charts
-  const closedIncidents: Incident[] = [
-    {
-      id: "INC-1034", title: "Sales order ingest schema drift",
-      severity: "P2", status: "Resolved", pipeline: "sales_order_ingest",
-      createdAt: "2026-04-12T05:10:00Z", owner: "Tom Hardy",
-      acknowledged: true, escalationLevel: 1, age: "Closed",
-    },
-    {
-      id: "INC-1033", title: "Treasury rates timeout after TLS upgrade",
-      severity: "P1", status: "Resolved", pipeline: "fin_treasury_rates",
-      createdAt: "2026-04-07T07:00:00Z", owner: "Sarah Chen",
-      acknowledged: true, escalationLevel: 2, age: "Closed",
-    },
-    {
-      id: "INC-1032", title: "Inventory backfill OOM hotfix verified",
-      severity: "P1", status: "Resolved", pipeline: "ops_inventory_load",
-      createdAt: "2026-04-06T06:15:00Z", owner: "Priya Patel",
-      acknowledged: true, escalationLevel: 1, age: "Closed",
-    },
-  ];
-
-  const activeRows: Incident[] = (incidents as Incident[] | undefined)?.filter((inc) => inc.status !== "Resolved") ?? [];
-  const allRows: Incident[] = [...activeRows, ...closedIncidents];
+  // Use fetched incidents data
+  const incidentRows: Incident[] = (incidents as Incident[] | undefined) ?? [];
   // Slice incidents proportional to selected account
-  const rowKeep = account.id === "all" ? allRows.length : Math.max(1, Math.ceil(allRows.length * accountScale));
-  const incidentRows: Incident[] = allRows.slice(0, rowKeep);
+  const rowKeep = account.id === "all" ? incidentRows.length : Math.max(1, Math.ceil(incidentRows.length * accountScale));
+  const displayedIncidents: Incident[] = incidentRows.slice(0, rowKeep);
 
   // Status pie data — count incidents grouped by status
-  const statusCounts = incidentRows.reduce<Record<string, number>>((acc, inc) => {
+  const statusCounts = displayedIncidents.reduce<Record<string, number>>((acc, inc) => {
     acc[inc.status] = (acc[inc.status] || 0) + 1;
     return acc;
   }, {});
@@ -421,7 +399,7 @@ export default function Incidents() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {incidentRows.map((inc) => {
+              {displayedIncidents.map((inc) => {
                 const isExpanded = expanded === inc.id;
                 return (
                   <Fragment key={inc.id}>

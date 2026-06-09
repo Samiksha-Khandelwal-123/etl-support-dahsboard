@@ -26,6 +26,14 @@ class JiraClient:
         """Get or create Jira client."""
         if cls._instance is None:
             settings = get_settings()
+
+            # DEBUG LOGGING
+            log.info("JIRA URL: %s", settings.jira_url)
+            log.info("JIRA USER: %s", settings.jira_username)
+            log.info("JIRA PROJECT: %s", settings.jira_project_key)
+            log.info("JIRA ISSUE TYPE: %s", settings.jira_issue_type)
+            log.info("USE_JIRA_INCIDENTS: %s", settings.use_jira_incidents)
+            
             if not settings.jira_url or not settings.jira_username or not settings.jira_api_token:
                 raise ValueError("Jira credentials not configured (jira_url, jira_username, jira_api_token)")
             
@@ -87,18 +95,34 @@ def list_issues(days: int = 30) -> List:
     client = JiraClient.get_client()
     
     try:
-        # Build JQL query - no date filter for now to get all issues
-        jql = (
-            f"project = {settings.jira_project_key} "
-            "ORDER BY created DESC"
-        )
-        
+        if settings.jira_issue_type:
+            # Build JQL query with issue type filter
+            jql = (
+                f'project = "{settings.jira_project_key}" '
+                f'AND issuetype = "{settings.jira_issue_type}" '
+                'ORDER BY created DESC'
+            )
+        else:
+            # If no issue type is configured, query the whole project.
+            jql = f'project = "{settings.jira_project_key}" ORDER BY created DESC'
+
+        log.info("Executing JQL query: %s", jql)
         issues = client.search_issues(jql, maxResults=None)
         log.info("Fetched %d issues from Jira project %s", len(issues), settings.jira_project_key)
+
+        if settings.jira_issue_type and len(issues) == 0:
+            log.warning(
+                "No issues found with issue type '%s'. Falling back to project-only query.",
+                settings.jira_issue_type,
+            )
+            fallback_jql = f'project = "{settings.jira_project_key}" ORDER BY created DESC'
+            log.info("Executing fallback JQL query: %s", fallback_jql)
+            issues = client.search_issues(fallback_jql, maxResults=None)
+            log.info("Fetched %d issues using fallback query", len(issues))
+
         return issues
-    
-    except JIRAError as exc:
-        log.error("Failed to fetch Jira issues: %s", exc)
+    except Exception as exc:
+        log.error("Failed to fetch Jira issues with JQL query: %s", exc)
         raise
 
 
@@ -140,52 +164,79 @@ def summary() -> IncidentSummary:
     """Generate incident summary from Jira issues."""
     try:
         issues = list_issues(days=7)
-        
-        open_count = 0
-        resolved_24h = 0
-        p1_count = 0
-        p2_count = 0
-        p3_count = 0
-        
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-        
+
+        openByP1 = 0
+        openByP2 = 0
+        openByP3 = 0
+        openByP4 = 0
+
+        aging0to1h = 0
+        aging1to4h = 0
+        aging4to12h = 0
+        aging12hPlus = 0
+
+        acknowledged = 0
+        unacknowledged = 0
+
+        now = datetime.now(timezone.utc)
+
         for issue in issues:
             try:
                 status = _map_status_to_incident_status(issue.fields.status.name if issue.fields.status else None)
                 severity = _map_priority_to_severity(issue.fields.priority)
-                
-                # Count by severity
-                if severity == "P1":
-                    p1_count += 1
-                elif severity == "P2":
-                    p2_count += 1
-                elif severity == "P3":
-                    p3_count += 1
-                
-                # Count open issues
+
+                # Only consider open incidents for open-by-priority and aging
                 if status != "Resolved":
-                    open_count += 1
-                
-                # Count resolved in last 24h
-                if status == "Resolved":
+                    # Count by severity
+                    if severity == "P1":
+                        openByP1 += 1
+                    elif severity == "P2":
+                        openByP2 += 1
+                    elif severity == "P3":
+                        openByP3 += 1
+                    else:
+                        openByP4 += 1
+
+                    # Acknowledgement heuristic: assigned -> acknowledged
+                    if getattr(issue.fields, "assignee", None):
+                        acknowledged += 1
+                    else:
+                        unacknowledged += 1
+
+                    # Compute aging buckets
                     try:
-                        resolved_str = issue.fields.resolutiondate or issue.fields.updated
-                        resolved = datetime.fromisoformat(resolved_str.replace("Z", "+00:00"))
-                        if resolved >= cutoff:
-                            resolved_24h += 1
-                    except (ValueError, AttributeError):
-                        pass
+                        created_str = issue.fields.created
+                        created_dt = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+                        delta_hours = (now - created_dt).total_seconds() / 3600.0
+                        if delta_hours < 1:
+                            aging0to1h += 1
+                        elif delta_hours < 4:
+                            aging1to4h += 1
+                        elif delta_hours < 12:
+                            aging4to12h += 1
+                        else:
+                            aging12hPlus += 1
+                    except Exception:
+                        # If created time parsing fails, treat as unknown/older
+                        aging12hPlus += 1
+                else:
+                    # skip resolved issues for open counts
+                    continue
             except Exception as exc:
-                log.warning("Error processing issue %s for summary: %s", issue.key, exc)
+                log.warning("Error processing issue %s for summary: %s", getattr(issue, 'key', '<unknown>'), exc)
                 continue
-        
+
         return IncidentSummary(
-            open=open_count,
-            acknowledged=0,  # Jira doesn't have direct acknowledgement field
-            resolved24h=resolved_24h,
-            p1=p1_count,
-            p2=p2_count,
-            p3=p3_count,
+            openByP1=openByP1,
+            openByP2=openByP2,
+            openByP3=openByP3,
+            openByP4=openByP4,
+            aging0to1h=aging0to1h,
+            aging1to4h=aging1to4h,
+            aging4to12h=aging4to12h,
+            aging12hPlus=aging12hPlus,
+            acknowledged=acknowledged,
+            unacknowledged=unacknowledged,
         )
     
     except Exception as exc:

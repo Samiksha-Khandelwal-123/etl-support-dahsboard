@@ -1,9 +1,12 @@
 """Application configuration loaded from environment variables."""
 from functools import lru_cache
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from dotenv import load_dotenv
+load_dotenv()
 
 
 class Settings(BaseSettings):
@@ -67,7 +70,7 @@ class Settings(BaseSettings):
     jira_api_token: Optional[str] = None
     jira_project_key: str = Field(default="SCRUM", description="Jira project key for incident board")
     use_jira_incidents: bool = Field(default=True, description="Use Jira as incident source instead of SSM for incidents and RCA")
-    jira_issue_type: str = Field(default="Bug", description="Jira issue type to track as incidents")
+    jira_issue_type: Optional[str] = Field(default=None, description="Optional Jira issue type to track as incidents; leave unset to fetch all project tickets")
     jira_status_mapping: dict = Field(
         default_factory=lambda: {"To Do": "Open", "In Progress": "Investigating", "In Review": "Mitigating", "Done": "Resolved"},
         description="Map Jira status to incident status"
