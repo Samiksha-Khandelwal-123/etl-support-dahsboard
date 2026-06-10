@@ -138,6 +138,8 @@ router.get("/costs/service-trend", async (_req, res): Promise<void> => {
     "7d": buildRange(7),
     "30d": buildRange(30),
     "60d": buildRange(60),
+    "90d": buildRange(90),
+    "365d": buildRange(365),
   });
 });
 

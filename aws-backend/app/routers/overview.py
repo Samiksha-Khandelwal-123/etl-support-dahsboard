@@ -1,4 +1,5 @@
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List
 
 from fastapi import APIRouter
@@ -26,28 +27,40 @@ router = APIRouter(prefix="/overview", tags=["overview"])
 
 @router.get("/kpis", response_model=OverviewKpis)
 def kpis() -> OverviewKpis:
-    try:
-        jobs = glue_service.list_jobs()
-        live = glue_service.live_status()
-        failed_recent = glue_service.recent_failed_jobs(limit=100)
-    except Exception as exc:
-        log.error("Glue service failed: %s", exc)
-        # Return empty data if Glue fails
-        from ..models.overview import LiveStatus
-        jobs = []
-        live = LiveStatus(success=0, failed=0, timedOut=0, delayed=0, waitingUpstream=0)
-        failed_recent = []
-    
-    if jira_service:
-        try:
-            inc_summary = jira_service.summary()
-        except Exception as exc:
-            log.error("Jira summary failed: %s", exc)
-            from ..models.incidents import IncidentSummary
-            inc_summary = IncidentSummary(open=0, acknowledged=0, resolved24h=0, p1=0, p2=0, p3=0)
-    else:
-        from ..models.incidents import IncidentSummary
-        inc_summary = IncidentSummary(open=0, acknowledged=0, resolved24h=0, p1=0, p2=0, p3=0)
+    from ..models.incidents import IncidentSummary
+    from ..models.overview import LiveStatus
+
+    jobs = []
+    live = LiveStatus(success=0, failed=0, timedOut=0, delayed=0, waitingUpstream=0)
+    failed_recent = []
+    inc_summary = IncidentSummary(open=0, acknowledged=0, resolved24h=0, p1=0, p2=0, p3=0)
+
+    tasks = {}
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        tasks[executor.submit(glue_service.list_jobs)] = "jobs"
+        tasks[executor.submit(glue_service.live_status)] = "live"
+        tasks[executor.submit(glue_service.recent_failed_jobs, limit=100)] = "failed_recent"
+
+        if jira_service:
+            tasks[executor.submit(jira_service.summary)] = "inc_summary"
+
+        for future in as_completed(tasks):
+            key = tasks[future]
+            try:
+                result = future.result()
+                if key == "jobs":
+                    jobs = result
+                elif key == "live":
+                    live = result
+                elif key == "failed_recent":
+                    failed_recent = result
+                elif key == "inc_summary":
+                    inc_summary = result
+            except Exception as exc:
+                if key == "inc_summary":
+                    log.error("Jira summary failed: %s", exc)
+                else:
+                    log.error("Glue service failed while fetching %s: %s", key, exc)
     
     total = len(jobs)
     failed = live.failed + live.timedOut

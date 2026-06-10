@@ -1,19 +1,22 @@
 """Application configuration loaded from environment variables."""
 from functools import lru_cache
+from pathlib import Path
 from typing import List, Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from dotenv import load_dotenv
-load_dotenv()
+
+_BACKEND_DIR = Path(__file__).resolve().parents[1]
+load_dotenv(_BACKEND_DIR / ".env")
 
 
 class Settings(BaseSettings):
     """Runtime settings. All values configurable via environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=_BACKEND_DIR / ".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",

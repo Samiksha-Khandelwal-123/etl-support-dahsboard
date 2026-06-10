@@ -17,25 +17,76 @@ import {
 } from "lucide-react";
 
 type ServiceKey = "all" | "glue" | "lambda";
-type RangeKey = "7d" | "30d" | "60d";
+type RangeKey = "7d" | "30d" | "60d" | "90d" | "365d";
 interface TrendPoint { date: string; cost: number }
 interface ServiceTrendRange { glue: TrendPoint[]; lambda: TrendPoint[]; all: TrendPoint[] }
 type ServiceTrendData = Record<RangeKey, ServiceTrendRange>;
+type RawServiceTrendData = Partial<ServiceTrendData> & {
+  ranges_7d?: ServiceTrendRange;
+  ranges_30d?: ServiceTrendRange;
+  ranges_60d?: ServiceTrendRange;
+  ranges_90d?: ServiceTrendRange;
+  ranges_365d?: ServiceTrendRange;
+};
+
+function normalizeTrendSeries(data: RawServiceTrendData | null | undefined): ServiceTrendData | null {
+  if (!data || typeof data !== "object") return null;
+
+  const fallback = { glue: [], lambda: [], all: [] };
+  const getRange = (range: RangeKey): ServiceTrendRange =>
+    data[range] ?? data[`ranges_${range}` as keyof RawServiceTrendData] ?? fallback;
+
+  return {
+    "7d": getRange("7d"),
+    "30d": getRange("30d"),
+    "60d": getRange("60d"),
+    "90d": getRange("90d"),
+    "365d": getRange("365d"),
+  };
+}
 
 export default function Costs() {
-  const { data: kpis } = useGetCostKpis();
+  const { data: kpis, isLoading, isError, error } = useGetCostKpis();
   const { account } = useAccount();
   const accountScale = account.scale;
   const [service, setService] = useState<ServiceKey>("all");
   const [range, setRange] = useState<RangeKey>("7d");
   const [serviceTrend, setServiceTrend] = useState<ServiceTrendData | null>(null);
+  const [serviceTrendError, setServiceTrendError] = useState<string | null>(null);
 
   useEffect(() => {
-    const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
-    fetch(`${base}/api/costs/service-trend`)
-      .then((r) => r.json())
-      .then((d: ServiceTrendData) => setServiceTrend(d))
-      .catch(() => setServiceTrend(null));
+    const controller = new AbortController();
+
+    setServiceTrendError(null);
+
+    fetch("/api/costs/service-trend", { signal: controller.signal })
+      .then(async (r) => {
+        if (!r.ok) {
+          let message = `Unable to load cost trend data (${r.status})`;
+          try {
+            const payload = await r.json();
+            if (payload && typeof payload === "object") {
+              const errorMessage =
+                (payload as { message?: string; error?: string }).message ??
+                (payload as { message?: string; error?: string }).error;
+              if (errorMessage) message = errorMessage;
+            }
+          } catch {
+            // Keep the generic status-based message.
+          }
+          throw new Error(message);
+        }
+
+        return (await r.json()) as RawServiceTrendData;
+      })
+      .then((d) => setServiceTrend(normalizeTrendSeries(d)))
+      .catch((error: unknown) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setServiceTrend(null);
+        setServiceTrendError(error instanceof Error ? error.message : "Unable to load cost trend data right now.");
+      });
+
+    return () => controller.abort();
   }, []);
 
   const chartData = useMemo(() => {
@@ -47,12 +98,21 @@ export default function Costs() {
     return r.glue.map((g, i) => ({
       date: g.date,
       glue: Math.round(g.cost * accountScale * 100) / 100,
-      lambda: Math.round((r.lambda[i]?.cost ?? 0) * accountScale * 100) / 100,
-      all: Math.round((r.all[i]?.cost ?? 0) * accountScale * 100) / 100,
+      lambda: Math.round((r.lambda?.[i]?.cost ?? 0) * accountScale * 100) / 100,
+      all: Math.round((r.all?.[i]?.cost ?? 0) * accountScale * 100) / 100,
     }));
   }, [serviceTrend, range, accountScale]);
 
-  if (!kpis) return <div className="flex items-center justify-center h-64 text-muted-foreground">Loading...</div>;
+  if (isLoading) return <div className="flex items-center justify-center h-64 text-muted-foreground">Loading...</div>;
+
+  if (isError || !kpis) {
+    const message = error instanceof Error ? error.message : "Unable to load cost KPI data.";
+    return (
+      <div className="flex h-64 items-center justify-center px-6 text-center text-sm text-muted-foreground">
+        {message}
+      </div>
+    );
+  }
 
   // ---------- Cost tile calculations ----------
   const today = new Date();
@@ -299,6 +359,8 @@ export default function Costs() {
                   <SelectItem value="7d">Last 7 Days</SelectItem>
                   <SelectItem value="30d">Last 30 Days</SelectItem>
                   <SelectItem value="60d">Last 60 Days</SelectItem>
+                  <SelectItem value="90d">Last 90 Days</SelectItem>
+                  <SelectItem value="365d">Last 365 Days</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -313,7 +375,7 @@ export default function Costs() {
                   dataKey="date"
                   tick={{ fontSize: 10 }}
                   tickFormatter={(v: string) => v.slice(5)}
-                  minTickGap={range === "60d" ? 24 : 12}
+                  minTickGap={range === "365d" ? 48 : range === "90d" ? 32 : range === "60d" ? 24 : 12}
                 />
                 <YAxis tick={{ fontSize: 10 }} tickFormatter={(v: number) => `$${v.toFixed(0)}`} />
                 <Tooltip
@@ -357,6 +419,10 @@ export default function Costs() {
                 )}
               </LineChart>
             </ResponsiveContainer>
+          ) : serviceTrendError ? (
+            <div className="h-[360px] flex items-center justify-center text-sm text-muted-foreground text-center px-6">
+              {serviceTrendError}
+            </div>
           ) : (
             <div className="h-[360px] flex items-center justify-center text-sm text-muted-foreground">
               Loading trend data...

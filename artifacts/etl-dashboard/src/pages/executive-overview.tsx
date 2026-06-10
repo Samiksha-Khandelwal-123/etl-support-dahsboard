@@ -1,9 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import {
-  useGetOverviewKpis,
-  useGetPipelineRuns,
-} from "@workspace/api-client-react";
+import { useGetPipelineRuns } from "@workspace/api-client-react";
 import { useAccount } from "@/contexts/AccountContext";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -78,6 +75,7 @@ const DATE_MULTIPLIERS: Record<string, number> = {
   "30d": 30,
   "60d": 60,
   "90d": 90,
+  "365d": 365,
 };
 
 function statusBadge(status: string) {
@@ -136,6 +134,9 @@ function filterRunsByDateRange<T extends { startTime: string }>(
       break;
     case "90d":
       cutoffTime = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+      break;
+    case "365d":
+      cutoffTime = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
       break;
     default:
       return runs;
@@ -461,7 +462,6 @@ function LambdaHistorySubsection({ functionName, onAnalyzeLogs }: LambdaHistoryS
 }
 
 export default function ExecutiveOverview() {
-  const { data: kpis } = useGetOverviewKpis();
   const { data: runs } = useGetPipelineRuns();
   const { account } = useAccount();
   const accountScale = account.scale;
@@ -501,13 +501,6 @@ export default function ExecutiveOverview() {
   useEffect(() => {
     setExpanded(null);
   }, [resourceType]);
-
-  if (!kpis)
-    return (
-      <div className="flex items-center justify-center h-64 text-muted-foreground">
-        Loading...
-      </div>
-    );
 
   const mult = (DATE_MULTIPLIERS[dateRange] ?? 1) * accountScale;
   const isLambda = resourceType === "lambda";
@@ -669,6 +662,7 @@ export default function ExecutiveOverview() {
               <SelectItem value="30d">Last 30 Days</SelectItem>
               <SelectItem value="60d">Last 60 Days</SelectItem>
               <SelectItem value="90d">Last 90 Days</SelectItem>
+              <SelectItem value="365d">Last 365 Days</SelectItem>
             </SelectContent>
           </Select>
         </div>

@@ -185,7 +185,7 @@ def _trend_by_service(days: int, service: str) -> List[CostTrendPoint]:
 
 @cached("long")
 def service_trend() -> ServiceTrend:
-    """Get cost trends for Glue and Lambda services over 7d, 30d, and 60d windows."""
+    """Get cost trends for Glue and Lambda services over 7d, 30d, 60d, 90d, and 365d windows."""
     def build_range(days: int) -> ServiceTrendSeries:
         glue = _trend_by_service(days, "AWS Glue")
         lambda_ = _trend_by_service(days, "AWS Lambda")
@@ -205,4 +205,6 @@ def service_trend() -> ServiceTrend:
         ranges_7d=build_range(7),
         ranges_30d=build_range(30),
         ranges_60d=build_range(60),
+        ranges_90d=build_range(90),
+        ranges_365d=build_range(365),
     )
